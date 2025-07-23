@@ -1,4 +1,4 @@
-# Moroccan License Plate OCR System
+# Moroccan License Plate OCR System (Work in Progress)
 
 A comprehensive OCR system designed specifically for Moroccan license plates using deep learning techniques. The system combines character detection (YOLOv8) and character classification (CNN) for accurate text recognition.
 
