@@ -1,250 +1,259 @@
-import tensorflow as tf
-import cv2
-import numpy as np
+#!/usr/bin/env python3
+"""
+Fixed training script with correct folder mapping
+Run: python fixed_trainer.py
+"""
+
 import os
-import random
+
+os.environ['CUDA_VISIBLE_DEVICES'] = '-1'  # Force CPU
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Suppress warnings
+
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers
+import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, confusion_matrix
-import seaborn as sns
+from pathlib import Path
+import cv2
 
-# Character mapping
-CHARACTERS = {
-    '0': 0, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9,
-    'أ': 10, 'ب': 11, 'د': 12, 'ھ': 13, 'ط': 15, 'و': 16
-}
 
-IDX_TO_CHAR = {v: k for k, v in CHARACTERS.items()}
+def load_data():
+    """Load data with correct folder mapping"""
+    print("🔄 Loading data with corrected folder mapping...")
 
-class CharacterClassifier:
-    def __init__(self, char_size=(32, 32)):
-        self.char_size = char_size
-        self.model = None
-        
-    def load_dataset(self, dataset_dir):
-        """Load and preprocess character images"""
-        print("Loading character dataset...")
-        images = []
-        labels = []
-        
-        for char_idx in range(len(CHARACTERS)):
-            char_dir = os.path.join(dataset_dir, str(char_idx))
-            if not os.path.exists(char_dir):
-                print(f"Warning: Directory {char_dir} not found")
-                continue
-                
-            char_images = 0
-            for img_file in os.listdir(char_dir):
-                if img_file.endswith(('.png', '.jpg', '.jpeg')):
-                    img_path = os.path.join(char_dir, img_file)
-                    
-                    # Load image as grayscale
-                    img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
-                    if img is None:
-                        continue
-                    
-                    # Apply preprocessing
-                    img = self._preprocess_image(img)
-                    
+    # Updated folder mapping to match your actual folders
+    folder_to_label = {
+        '0': 0, '1': 1, '2': 2, '3': 3, '4': 4,
+        '5': 5, '6': 6, '7': 7, '8': 8, '9': 9,
+        '10': 10,  # alif (ا)
+        '11': 11,  # baa (ب)
+        '12': 12,  # haa (ح)
+        '13': 13,  # ttaa (ت)
+        '15': 14,  # waw (و) - Note: folder 15 maps to label 14
+        '16': 15  # dal (د) - Note: folder 16 maps to label 15
+    }
+
+    class_names = [
+        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+        'ا', 'ب', 'ح', 'ت', 'و', 'د'
+    ]
+
+    images = []
+    labels = []
+
+    data_dir = Path('data/synth')
+
+    print("Checking folders...")
+    for folder_name, label in folder_to_label.items():
+        folder_path = data_dir / folder_name
+
+        if not folder_path.exists():
+            print(f"❌ Missing folder: {folder_name}")
+            continue
+
+        image_files = list(folder_path.glob('*.png')) + \
+                      list(folder_path.glob('*.jpg')) + \
+                      list(folder_path.glob('*.jpeg'))
+
+        print(f"✅ {folder_name} -> {class_names[label]}: {len(image_files)} images")
+
+        for img_file in image_files:
+            try:
+                # Load image
+                img = cv2.imread(str(img_file), cv2.IMREAD_GRAYSCALE)
+                if img is None:
+                    continue
+
+                # Resize to 64x64
+                img = cv2.resize(img, (64, 64))
+
+                # Normalize to [0, 1]
+                img = img.astype('float32') / 255.0
+
+                # Check if image is not all zeros or ones
+                if np.std(img) > 0.01:  # Has some variation
                     images.append(img)
-                    labels.append(char_idx)
-                    char_images += 1
-            
-            print(f"Loaded {char_images} images for character '{IDX_TO_CHAR[char_idx]}'")
-        
-        return np.array(images), np.array(labels)
-    
-    def _preprocess_image(self, img):
-        """Preprocess individual image"""
-        # Resize
-        resized = cv2.resize(img, self.char_size, interpolation=cv2.INTER_AREA)
-        
-        # Random preprocessing augmentation during training
-        if random.random() < 0.3:
-            # Apply adaptive thresholding
-            resized = cv2.adaptiveThreshold(
-                resized, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                cv2.THRESH_BINARY_INV, 11, 2
-            )
-        
-        # Normalize
-        normalized = resized.astype(np.float32) / 255.0
-        return normalized
-    
-    def build_model(self):
-        """Build CNN model for character classification"""
-        model = tf.keras.Sequential([
-            tf.keras.layers.Input(shape=(self.char_size[0], self.char_size[1], 1)),
-            
-            # First conv block
-            tf.keras.layers.Conv2D(32, (3, 3), activation='relu', padding='same'),
-            tf.keras.layers.BatchNormalization(),
-            tf.keras.layers.MaxPooling2D((2, 2)),
-            tf.keras.layers.Dropout(0.25),
-            
-            # Second conv block
-            tf.keras.layers.Conv2D(64, (3, 3), activation='relu', padding='same'),
-            tf.keras.layers.BatchNormalization(),
-            tf.keras.layers.MaxPooling2D((2, 2)),
-            tf.keras.layers.Dropout(0.25),
-            
-            # Third conv block
-            tf.keras.layers.Conv2D(128, (3, 3), activation='relu', padding='same'),
-            tf.keras.layers.BatchNormalization(),
-            tf.keras.layers.MaxPooling2D((2, 2)),
-            tf.keras.layers.Dropout(0.25),
-            
-            # Classifier
-            tf.keras.layers.Flatten(),
-            tf.keras.layers.Dense(256, activation='relu'),
-            tf.keras.layers.Dropout(0.5),
-            tf.keras.layers.Dense(len(CHARACTERS), activation='softmax')
-        ])
-        
-        model.compile(
-            optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
-            loss='sparse_categorical_crossentropy',
-            metrics=['accuracy']
-        )
-        
-        self.model = model
-        return model
-    
-    def train(self, dataset_dir, epochs=50, batch_size=32, validation_split=0.2):
-        """Train the character classification model"""
-        # Load data
-        X, y = self.load_dataset(dataset_dir)
-        
-        if len(X) == 0:
-            raise ValueError("No data found! Please generate synthetic data first.")
-        
-        print(f"Dataset loaded: {len(X)} images")
-        
-        # Reshape for CNN
-        X = X.reshape(X.shape[0], self.char_size[0], self.char_size[1], 1)
-        
-        # Split data
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=validation_split, random_state=42, stratify=y
-        )
-        
-        print(f"Training set: {len(X_train)} images")
-        print(f"Test set: {len(X_test)} images")
-        
-        # Build model
-        if self.model is None:
-            self.build_model()
-        
-        # Callbacks
-        callbacks = [
-            tf.keras.callbacks.EarlyStopping(
-                patience=15, restore_best_weights=True, 
-                monitor='val_accuracy', mode='max'
-            ),
-            tf.keras.callbacks.ReduceLROnPlateau(
-                factor=0.5, patience=5, min_lr=1e-6, verbose=1
-            ),
-            tf.keras.callbacks.ModelCheckpoint(
-                'models/classifier/best_char_classifier.h5',
-                save_best_only=True, monitor='val_accuracy', mode='max'
-            )
-        ]
-        
-        # Create model directory
-        os.makedirs('models/classifier', exist_ok=True)
-        
-        # Train
-        history = self.model.fit(
-            X_train, y_train,
-            batch_size=batch_size,
-            epochs=epochs,
-            validation_data=(X_test, y_test),
-            callbacks=callbacks,
+                    labels.append(label)
+                else:
+                    print(f"⚠️  Skipping flat image: {img_file}")
+
+            except Exception as e:
+                print(f"Error loading {img_file}: {e}")
+
+    return np.array(images), np.array(labels), class_names
+
+
+def create_better_model():
+    """Create a simpler, more effective model"""
+    model = keras.Sequential([
+        # Input layer
+        layers.Input(shape=(64, 64, 1)),
+
+        # First block - simpler
+        layers.Conv2D(16, (5, 5), activation='relu', padding='same'),
+        layers.BatchNormalization(),
+        layers.MaxPooling2D((2, 2)),
+        layers.Dropout(0.2),
+
+        # Second block
+        layers.Conv2D(32, (3, 3), activation='relu', padding='same'),
+        layers.BatchNormalization(),
+        layers.MaxPooling2D((2, 2)),
+        layers.Dropout(0.2),
+
+        # Third block
+        layers.Conv2D(64, (3, 3), activation='relu', padding='same'),
+        layers.BatchNormalization(),
+        layers.MaxPooling2D((2, 2)),
+        layers.Dropout(0.3),
+
+        # Dense layers
+        layers.Flatten(),
+        layers.Dense(128, activation='relu'),
+        layers.BatchNormalization(),
+        layers.Dropout(0.5),
+        layers.Dense(64, activation='relu'),
+        layers.Dropout(0.3),
+        layers.Dense(16, activation='softmax')  # 16 classes
+    ])
+
+    return model
+
+
+def main():
+    print("🚀 Fixed Moroccan LP Character Training")
+    print("=" * 60)
+
+    # Load data with correct mapping
+    X, y, class_names = load_data()
+
+    if len(X) == 0:
+        print("❌ No images loaded! Check your data directory structure.")
+        return
+
+    print(f"\n📊 Dataset Summary:")
+    print(f"Total images: {len(X)}")
+    print(f"Image shape: {X[0].shape}")
+    print(f"Classes: {len(set(y))}")
+    print(f"Pixel range: {X.min():.3f} - {X.max():.3f}")
+
+    # Check class distribution
+    unique, counts = np.unique(y, return_counts=True)
+    print(f"\nClass distribution:")
+    for class_idx, count in zip(unique, counts):
+        print(f"  {class_names[class_idx]}: {count} images")
+
+    # Split data
+    X_train, X_val, y_train, y_val = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y
+    )
+
+    # Reshape for CNN (add channel dimension)
+    X_train = X_train.reshape(-1, 64, 64, 1)
+    X_val = X_val.reshape(-1, 64, 64, 1)
+
+    # Convert to categorical
+    y_train_cat = keras.utils.to_categorical(y_train, 16)
+    y_val_cat = keras.utils.to_categorical(y_val, 16)
+
+    print(f"\nTraining set: {len(X_train)} images")
+    print(f"Validation set: {len(X_val)} images")
+
+    # Create model
+    model = create_better_model()
+
+    # Compile with a lower learning rate
+    model.compile(
+        optimizer=keras.optimizers.Adam(learning_rate=0.0005),  # Lower LR
+        loss='categorical_crossentropy',
+        metrics=['accuracy']
+    )
+
+    print(f"\nModel Summary:")
+    model.summary()
+
+    # Create output directory
+    Path('models/classifier').mkdir(parents=True, exist_ok=True)
+
+    # Callbacks
+    callbacks = [
+        keras.callbacks.EarlyStopping(
+            monitor='val_accuracy',
+            patience=8,
+            restore_best_weights=True,
+            verbose=1
+        ),
+        keras.callbacks.ReduceLROnPlateau(
+            monitor='val_loss',
+            factor=0.5,
+            patience=5,
+            min_lr=1e-6,
+            verbose=1
+        ),
+        keras.callbacks.ModelCheckpoint(
+            'models/classifier/best_model.keras',
+            monitor='val_accuracy',
+            save_best_only=True,
             verbose=1
         )
-        
-        # Evaluate
-        test_loss, test_accuracy = self.model.evaluate(X_test, y_test, verbose=0)
-        print(f"\nFinal test accuracy: {test_accuracy:.4f}")
-        
-        # Generate detailed evaluation
-        self._evaluate_model(X_test, y_test)
-        
-        # Plot training history
-        self._plot_training_history(history)
-        
-        return history
-    
-    def _evaluate_model(self, X_test, y_test):
-        """Detailed model evaluation"""
-        # Predictions
-        y_pred = self.model.predict(X_test)
-        y_pred_classes = np.argmax(y_pred, axis=1)
-        
-        # Classification report
-        char_names = [IDX_TO_CHAR[i] for i in range(len(CHARACTERS))]
-        print("\nClassification Report:")
-        print(classification_report(y_test, y_pred_classes, target_names=char_names))
-        
-        # Confusion matrix
-        cm = confusion_matrix(y_test, y_pred_classes)
-        plt.figure(figsize=(10, 8))
-        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
-                   xticklabels=char_names, yticklabels=char_names)
-        plt.title('Confusion Matrix')
-        plt.ylabel('True Label')
-        plt.xlabel('Predicted Label')
-        plt.tight_layout()
-        plt.show()
-    
-    def _plot_training_history(self, history):
-        """Plot training history"""
-        plt.figure(figsize=(12, 4))
-        
-        # Accuracy
-        plt.subplot(1, 2, 1)
-        plt.plot(history.history['accuracy'], label='Train Accuracy')
-        plt.plot(history.history['val_accuracy'], label='Validation Accuracy')
-        plt.title('Model Accuracy')
-        plt.ylabel('Accuracy')
-        plt.xlabel('Epoch')
-        plt.legend()
-        plt.grid(True)
-        
-        # Loss
-        plt.subplot(1, 2, 2)
-        plt.plot(history.history['loss'], label='Train Loss')
-        plt.plot(history.history['val_loss'], label='Validation Loss')
-        plt.title('Model Loss')
-        plt.ylabel('Loss')
-        plt.xlabel('Epoch')
-        plt.legend()
-        plt.grid(True)
-        
-        plt.tight_layout()
-        plt.show()
-    
-    def save_model(self, filepath='models/classifier/char_classifier.h5'):
-        """Save the trained model"""
-        if self.model is not None:
-            os.makedirs(os.path.dirname(filepath), exist_ok=True)
-            self.model.save(filepath)
-            print(f"Model saved to {filepath}")
-    
-    def load_model(self, filepath='models/classifier/char_classifier.h5'):
-        """Load a trained model"""
-        try:
-            self.model = tf.keras.models.load_model(filepath)
-            print(f"Model loaded from {filepath}")
-        except Exception as e:
-            print(f"Error loading model: {e}")
+    ]
+
+    # Train model
+    print("\n🔥 Starting training...")
+    history = model.fit(
+        X_train, y_train_cat,
+        batch_size=16,  # Smaller batch size
+        epochs=50,
+        validation_data=(X_val, y_val_cat),
+        callbacks=callbacks,
+        verbose=1
+    )
+
+    # Save final model
+    model.save('models/classifier/moroccan_lp_classifier.keras')
+    print(f"\n✅ Training completed!")
+    print(f"📁 Model saved to: models/classifier/moroccan_lp_classifier.keras")
+
+    # Show results
+    best_acc = max(history.history['val_accuracy'])
+    print(f"🎯 Best validation accuracy: {best_acc:.3f}")
+
+    if best_acc > 0.8:
+        print("🎉 Great! Model is learning well!")
+    elif best_acc > 0.5:
+        print("🔄 Model is learning, but could improve")
+    else:
+        print("⚠️  Model struggling - check data quality")
+
+    # Plot training history
+    plt.figure(figsize=(12, 4))
+
+    plt.subplot(1, 2, 1)
+    plt.plot(history.history['accuracy'], label='Training')
+    plt.plot(history.history['val_accuracy'], label='Validation')
+    plt.title('Model Accuracy')
+    plt.xlabel('Epoch')
+    plt.ylabel('Accuracy')
+    plt.legend()
+    plt.grid(True)
+
+    plt.subplot(1, 2, 2)
+    plt.plot(history.history['loss'], label='Training')
+    plt.plot(history.history['val_loss'], label='Validation')
+    plt.title('Model Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.grid(True)
+
+    plt.tight_layout()
+    plt.savefig('training_results.png', dpi=150, bbox_inches='tight')
+    plt.show()
+
+    return model, history
+
 
 if __name__ == "__main__":
-    classifier = CharacterClassifier()
-    
-    # Train the model
-    print("Training character classifier...")
-    classifier.train('data/synth', epochs=30, batch_size=32)
-    
-    # Save the model
-    classifier.save_model()
+    model, history = main()
